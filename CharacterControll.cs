@@ -6,9 +6,10 @@ public class CharacterControll : MonoBehaviour
 {
 
     public float speed = 5f;//移動速度
-
+    public int life          = 10;
     public GameObject SpherePrefab;  // 弾のプレハブ
     public float bulletSpeed = 20f;  // 弾の速度
+    
     private Rigidbody rb;
     private Vector3 input;
 

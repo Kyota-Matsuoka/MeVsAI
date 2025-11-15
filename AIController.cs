@@ -2,9 +2,11 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class AIController : MonoBehaviour
+public class AIController : BaseAI
 {
+
     //PID比率情報
+    /*親クラスで定義しているため、コメントアウトして再定義しないようにする
     public float proportal = 1.0f;
     public float integral = 0.0f;
     public float derivative = 0.4f;
@@ -69,16 +71,34 @@ public class AIController : MonoBehaviour
     private List<Vector3> proportalData;
     private List<Vector3> derivativeData;
 
-
+    */
 
     /*ShootTimer/BulletSpeed_AI/PD_long:PD_middle:PD_shortの上手くいった比率と数値
      * 0.5/65/1.7:0.6/0.9:0.6/0.5:0.8 →初期装備 D_long 1ぐらいあってもいいかも
      * 0.3/85/2.1:0.6/1.3:0.6/未定
      * 
-     */
+     
 
+    public struct Personality
+    {
+        public float socialDistance;   // 距離の保ち方（例：0.5f〜10f）
+        public float shootCoolTime;    // 弾を撃つ頻度（例：秒単位のクールタイム）
+        public float intelligence;     // 予測力（0〜1）高いほど先読み行動
+        public float cognition;        // 状況把握力（0〜1）高いほど素早く反応
+    }
 
-
+    public enum State
+    {
+        Attack,        // 攻撃
+        Escape,        // 逃走
+        Indifference   // 無関心
+    }
+    */
+    void Awake()
+    {
+        rb = GetComponent<Rigidbody>();
+        rb.freezeRotation = true; // 回転防止（地面で倒れないように）
+    }
     // Start is called before the first frame update
     void Start()
     {
@@ -93,7 +113,7 @@ public class AIController : MonoBehaviour
         errorVector = Vector3.zero;
         avgPropVector = Vector3.zero;
         avgDerVector = Vector3.zero;
-        avgVector   = Vector3.zero; 
+        avgVector = Vector3.zero;
         shootVector = Vector3.zero;
         combinedDerVector = Vector3.zero;
         combinedPropVector = Vector3.zero;
@@ -105,8 +125,29 @@ public class AIController : MonoBehaviour
         predPropVector = Vector3.zero;
         errorPropVector = Vector3.zero;
 
+        toAIVector = Vector3.zero;
+        rotVector = Vector3.zero;
+        escapeVector = Vector3.zero;
+        headForVector = Vector3.zero;
+
         proportalData = new List<Vector3>();
         derivativeData = new List<Vector3>();
+
+        //構造体の初期化
+        personality = new Personality
+        {
+            //陰湿
+            socialDistance   = 15f,  // 距離の保ち方（例：0.5f〜10f）
+            shootCoolTime    = 0.5f,    // 弾を撃つ頻度（例：秒単位のクールタイム）
+            intelligence     = 1f,    // 予測力（0〜1）高いほど先読み行動  
+            cognition        = 0.7f, //判断力
+            shootCoolTimeMin = 0.3f,
+            shootCoolTimeMax = 0.9f,
+            randomCoolTime   = true,
+
+        };
+
+
     }
 
     // Update is called once per frame
@@ -128,8 +169,17 @@ public class AIController : MonoBehaviour
         {//shootTimerCheckを下げると、うまく追従できなくなる。厳密には、追いつかない →　なぜ　→　短すぎて、うまく予測できなくなっている？　→　弾を撃つ速度だけ、下げる
             shootTimer = 0f;
             shootPos = PID();
+            
             Shoot_AI(shootPos);
+            //AIの移動ベクトルの基となるPlayerの予測ベクトルはここで更新する
+            headForVector = shootVector;
+            //追加
+            escapeVector = KeepSocialDistance(headForVector);
+            rb.velocity = escapeVector.normalized * speed;
+
         }
+
+
 
         /*色々試したみたところ、TimerとBulletSpeedは同時に調節する必要がある
          * また、Timerを大きくすると、速すぎる＋予測が過剰評価になる　→　bulletSpeedで調節が必要
@@ -141,7 +191,72 @@ public class AIController : MonoBehaviour
        
     }
 
-    Vector3 PID()
+    public override void Behaivor()//移動　攻撃　判断
+    {
+        /*
+         * 逃げる時もPID使ってみるか？　
+         * 判断は移動と攻撃を求めてから、いや逆か、判断して、移動と攻撃だな。逃げるべきか、追うべきか、それから実行かな。
+         * となると、関数は分けたほうが良いか。
+         */
+        if (personality.randomCoolTime == true)
+        {
+            personality.shootCoolTime = Random.Range(personality.shootCoolTimeMin, personality.shootCoolTimeMax);
+            shootTimer = personality.shootCoolTime;
+
+
+        }
+    }
+
+    public override Vector3 KeepSocialDistance(Vector3 headForVector) 
+    {//shootVectorは次の相手の予測位置　ここは一旦保留 PID内でこの関数を呼ぶのも手 shootVector OR varVectorで迷っている
+   
+        //1.フィールド上　→追跡or逃走の2パターン
+
+        //playerとの距離とベクトルの角度は比例する   →toAIVectorが基本・shootVectorが予測
+        toAIVector  = transform.position - player.transform.position;
+
+        /*
+        //ベクトル同士の相違度を調べる   相違度から方向ベクトルを算出することはできない
+        float dot   = Vector3.Dot(shootVector.normalized, toAIVector.normalized);//AIまでのベクトルとPlayerの予測ベクトルの内積
+        //dotProportion :dotをどの程度ベクトル作成に反映するかどうか   ↓以下の式は　AIVector.magnitude > socialDistanceであることが条件
+        float dotProportion = Mathf.Pow(1f / socialDistance, 2) * Mathf.Pow(toAIVector.magnitude - socialDistance, 2);//dotProportion = ((1/socialDistance)**2)  *  (AIVector.magnitude - socialDistance) ** 2)  
+        float reDot = dot * dotProportion;//相違度が大きい/距離が近いほど1 or -1に近くなる
+        reDot = -reDot;//反転//(reDot < 0f) ? -reDot : reDot;//0以下ならプラスに変換
+        */
+
+        float rotProportion = Mathf.Pow(1f / personality.socialDistance, 2) * Mathf.Pow(toAIVector.magnitude - personality.socialDistance, 2);
+        rotProportion = Mathf.Clamp01(rotProportion); // 安全のため0〜1に制限
+
+        // 内積から角度を求める）
+        float dot = Vector3.Dot(toAIVector.normalized, headForVector.normalized);
+        dot = Mathf.Clamp(dot, -1f, 1f); // 浮動小数の誤差対策
+        float angle = Mathf.Acos(dot) * Mathf.Rad2Deg;
+
+        // Quaternionを使って、toAIVecotrを線対称にshootVectorの対称方向への方向単位ベクトル(rotVector)の作成
+        Quaternion rot = Quaternion.AngleAxis(angle, Vector3.up);
+        Vector3 rotVector = rot * toAIVector.normalized;
+        rotVector = rotVector * headForVector.magnitude;//作成したrotatedVector(方向単位ベクトル)を元々の大きさにする
+        
+
+
+        escapeVector = (toAIVector * (1 - rotProportion)) + (rotVector * (rotProportion));//全体の割合を１
+
+        //2.フィールド端
+        /*
+        if () {//フィールド端
+
+
+        }
+        */
+        //3.フィールドの四隅
+
+        if(toAIVector.magnitude > 20)
+            return Vector3.zero;
+        else
+            return escapeVector;
+    }
+
+    public override Vector3 PID()
     {
         //更新処理
 
@@ -285,58 +400,72 @@ public class AIController : MonoBehaviour
         return shootPosSet;
     }
 
-    void Shoot_AI(Vector3 shootPos)
+    public override void Shoot_AI(Vector3 shootPos)
     {
+        //Debug.Log(SpherePrefab_AI);
         if (shootPos != Vector3.zero)
         {
-            //ベクトルの作成+normalized
-            Vector3 origin = transform.position;
-            Vector3 shootDir_AI = (shootPos - origin).normalized;
-            Ray ray = new Ray(origin, shootDir_AI);
-
-            GameObject bullet_AI = Instantiate(SpherePrefab_AI, origin, Quaternion.identity);//Quaternionは無回転を表す
-
-            // 弾に力を加える
-            Rigidbody bulletRb = bullet_AI.GetComponent<Rigidbody>();
-            bulletRb.velocity = shootDir_AI * bulletSpeed_AI_ver2;//ray.direction に向かってbulletSpeedで飛ばす
-            //bulletRb.AddForce(ray.direction * bulletSpeed, ForceMode.VelocityChange);//ForceMode VelocityChange質量を無視して、速度を一気に変える
-
-            // 一定時間後に弾を自動削除
-            Destroy(bullet_AI, 3f);
-            //Debug.Log($"bulletSpeed:{bulletSpeed_AI_ver2}\n");
-            /*
-             * Rayの表示
-            */
-            //自分の位置からshootPosに向けてRayを飛ばす
-            float maxDistance = 100f; // レイの距離
-            RaycastHit hit;
-
-            if (Physics.Raycast(ray, out hit, maxDistance))
+            if (SpherePrefab_AI != null)
             {
-                if (hit.collider.CompareTag("Player"))
+                //ベクトルの作成+normalized
+                Vector3 origin = transform.position;
+                Vector3 shootDir_AI = (shootPos - origin).normalized;
+                Ray ray = new Ray(origin, shootDir_AI);
+
+                /*
+                 * SpherePrafab_AIにDestroy関数を入れると、参照元自体を破壊することになる
+                 * →おそらく、インスタンス化されたものにのみDestroy関数を適用しないといけない
+                */
+                GameObject bullet_AI = Instantiate(SpherePrefab_AI, origin, Quaternion.identity);//Quaternionは無回転を表す
+                
+                // 弾に力を加える
+                Rigidbody bulletRb = bullet_AI.GetComponent<Rigidbody>();
+                bulletRb.velocity = shootDir_AI * bulletSpeed_AI_ver2;
+                Debug.Log($"velocity:{bulletRb.velocity}\n");
+                //Debug.Log($"ShootPos: {shootPos}\n");
+                Debug.Log($"bullet_AI:{bullet_AI}\n");
+                //Debug.Log($"bullet_AI_pos:{bullet_AI.transform.position}\n");
+                //bullet_AIも通ってる
+
+                //ray.direction に向かってbulletSpeedで飛ばす
+                //bulletRb.AddForce(ray.direction * bulletSpeed, ForceMode.VelocityChange);//ForceMode VelocityChange質量を無視して、速度を一気に変える
+
+
+
+
+
+                // 一定時間後に弾を自動削除
+                //Destroy(bullet_AI, 3f);
+                //Debug.Log($"bulletSpeed:{bulletSpeed_AI_ver2}\n");
+                /*
+                 * Rayの表示
+                */
+                //自分の位置からshootPosに向けてRayを飛ばす
+                float maxDistance = 100f; // レイの距離
+                RaycastHit hit;
+
+                if (Physics.Raycast(ray, out hit, maxDistance))
                 {
-                    //Debug.Log($"Playerにヒット: {hit.collider.name}");
+                    if (hit.collider.CompareTag("Player"))
+                    {
+                        //Debug.Log($"Playerにヒット: {hit.collider.name}");
+                    }
                 }
+
+                //デバッグ可視化（Sceneビューで確認）
+                Debug.DrawRay(origin, shootDir_AI * maxDistance, Color.red, 0.5f);
+            }
+            else
+            {
+                Debug.LogWarning("SpherePrefab_AI がアタッチされていません！");
             }
 
-            //デバッグ可視化（Sceneビューで確認）
-            Debug.DrawRay(origin, shootDir_AI * maxDistance, Color.red, 0.5f);
         }
+        
     }
-                                                                    
-
-    void Personality()
-    {
-        string socialDistance;//距離の保ち方
-        string shootCoolTime;//弾を撃つ頻度
-        string intelligence;//予測するかどうか
-        string cognition;//状況把握 
-    }
-
-
 
     //過去データの更新・整理・平均の取得
-    Vector3 ProportalDataAverage(Vector3 newData)
+    public override Vector3 ProportalDataAverage(Vector3 newData)
     {
         proportalData.Add(newData);
         if (proportalData.Count > dataCount)
@@ -355,7 +484,7 @@ public class AIController : MonoBehaviour
         return proportalSum / proportalData.Count;
     }
 
-    Vector3 DerivativeDataAverage(Vector3 newData)
+    public override Vector3 DerivativeDataAverage(Vector3 newData)
     {
         derivativeData.Add(newData);
         if (derivativeData.Count > dataCount)
@@ -478,7 +607,7 @@ public class AIController : MonoBehaviour
     }
 
 
-    Vector3 ReinForceLearning_Ver2(Vector3 varVector, float derFactor)//強化学習
+    public override Vector3 ReinForceLearning_Ver2(Vector3 varVector, float derFactor)//強化学習
     {   //1.前回の予測ベクトルの精査　→ 2.学習 → 3.予測ベクトルの作成 →4.最終学習
 
         //0.平均データベクトルの更新
@@ -599,6 +728,7 @@ public class AIController : MonoBehaviour
         Debug.DrawRay(origin, errorDerVector * 5f, Color.magenta, 0.3f);
 
         // デバッグログで数値確認（小数第2位）
+        /*
         Debug.Log(
             $"[Derivatives]\n" +
             $"derVector: {derVector.ToString("F2")}\n" +
@@ -607,6 +737,7 @@ public class AIController : MonoBehaviour
             $"errorDerVector: {errorDerVector.ToString("F2")}\n" +
             $"derWeight:{derWeight.ToString("F2")}\n"
         );
+        */
 
 
         return predDerVector;//一旦、比例を無視した、微分のみの戻り値
