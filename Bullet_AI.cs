@@ -44,7 +44,11 @@ public class Bullet_AI : MonoBehaviour
 
 
     }
-    
+    void Update()
+    {
+        //Debug.Log($"velocity:{GetComponent<Rigidbody>().velocity}\n");
+
+    }
 
     // 衝突判定
     void OnCollisionEnter(Collision collision)

@@ -97,6 +97,7 @@ public class AIController : BaseAI
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        isGroundedCheck = GetComponentInChildren<IsGroundedCheck>();//コンポーネントが子オブジェクトの場合の取得方法
         rb.freezeRotation = true; // 回転防止（地面で倒れないように）
     }
     // Start is called before the first frame update
@@ -129,15 +130,21 @@ public class AIController : BaseAI
         rotVector = Vector3.zero;
         escapeVector = Vector3.zero;
         headForVector = Vector3.zero;
+        toCenterVector = Vector3.zero;
 
         proportalData = new List<Vector3>();
         derivativeData = new List<Vector3>();
+
+        isGrounded = true;
+        isOutOfArea = true;
+        isGoBacked = false;// true;
 
         //構造体の初期化
         personality = new Personality
         {
             //陰湿
-            socialDistance   = 15f,  // 距離の保ち方（例：0.5f〜10f）
+            socialDistance   = 15f, // 距離の保ち方（例：0.5f〜10f）
+            emergencyDistance= 10f,//   相手の動きの向きが逃げる向きを決定づける距離
             shootCoolTime    = 0.5f,    // 弾を撃つ頻度（例：秒単位のクールタイム）
             intelligence     = 1f,    // 予測力（0〜1）高いほど先読み行動  
             cognition        = 0.7f, //判断力
@@ -146,6 +153,10 @@ public class AIController : BaseAI
             randomCoolTime   = true,
 
         };
+        //ステートの初期化 アクセスするときは型.変数にする
+        position = Position.Stop;
+
+        
 
 
     }
@@ -163,21 +174,39 @@ public class AIController : BaseAI
             shootPos = PID();
         } →これはやめといたほうがいい
         */
+
+        //shootTimerCheckとmoveTimerCheckは同じのほうが無難
         //弾を打つクールタイム
         shootTimer += Time.deltaTime;
         if (shootTimer >= shootTimerCheck)
         {//shootTimerCheckを下げると、うまく追従できなくなる。厳密には、追いつかない →　なぜ　→　短すぎて、うまく予測できなくなっている？　→　弾を撃つ速度だけ、下げる
             shootTimer = 0f;
             shootPos = PID();
-            
+            transform.LookAt(shootPos);
             Shoot_AI(shootPos);
+            
+        }
+
+        
+        //移動ベクトル計算クールタイム
+        moveTimer += Time.deltaTime;
+        if(moveTimer >= moveTimerCheck)
+        {
+            moveTimer = 0f;
             //AIの移動ベクトルの基となるPlayerの予測ベクトルはここで更新する
             headForVector = shootVector;
             //追加
             escapeVector = KeepSocialDistance(headForVector);
-            rb.velocity = escapeVector.normalized * speed;
+            rb.velocity = escapeVector * speed;
+            Debug.DrawRay(transform.position, escapeVector * 20f, Color.blue, 0.5f);
+            Debug.Log($"Velocity:{rb.velocity}");
 
         }
+
+        //中央に戻るべきかのチェック
+        //isGrounded =isGroundedCheck.IsGrounded();
+        //goBacked   = isGroundedCheck.IsGoBack();
+        //Debug.Log($"goBacked:{goBacked}");
 
 
 
@@ -188,10 +217,10 @@ public class AIController : BaseAI
          * 
          * 
          */
-       
+
     }
 
-    public override void Behaivor()//移動　攻撃　判断
+    public override void UnderstandSituation()//移動　攻撃　判断
     {
         /*
          * 逃げる時もPID使ってみるか？　
@@ -205,6 +234,13 @@ public class AIController : BaseAI
 
 
         }
+
+
+        //エリア外かエリア内かどうかの確認
+        //isGroundCheck.isGround();
+        //isGroundCheck.isOutOfArea();
+
+
     }
 
     public override Vector3 KeepSocialDistance(Vector3 headForVector) 
@@ -215,6 +251,19 @@ public class AIController : BaseAI
         //playerとの距離とベクトルの角度は比例する   →toAIVectorが基本・shootVectorが予測
         toAIVector  = transform.position - player.transform.position;
 
+        //Stateの処理
+        isGrounded = isGroundedCheck.IsGrounded();
+        if ((isGrounded == false && toAIVector.magnitude < personality.emergencyDistance) || isGoBacked == true)//場外かつ緊急距離なら中央に戻る
+            position = Position.GoBack;
+        else if (toAIVector.magnitude > personality.socialDistance || isGrounded == false)//実際の距離が社会距離より大きければ、動かない
+            position = Position.Stop;
+        else //if (toAIVector.magnitude < personality.socialDistance && )
+            position = Position.Escape;
+
+        //position = Position.Escape;
+
+        Debug.Log($"position:{position}");
+
         /*
         //ベクトル同士の相違度を調べる   相違度から方向ベクトルを算出することはできない
         float dot   = Vector3.Dot(shootVector.normalized, toAIVector.normalized);//AIまでのベクトルとPlayerの予測ベクトルの内積
@@ -224,36 +273,97 @@ public class AIController : BaseAI
         reDot = -reDot;//反転//(reDot < 0f) ? -reDot : reDot;//0以下ならプラスに変換
         */
 
-        float rotProportion = Mathf.Pow(1f / personality.socialDistance, 2) * Mathf.Pow(toAIVector.magnitude - personality.socialDistance, 2);
+        //距離の保ち方と実際の距離を使って、どの程度playerの移動角度を考慮するかどうか、を2次関数で 計算(playerとの距離が近いほど、rotProportionが大きくなる)
+        /*
+        float rotProportion = Mathf.Pow(1f / personality.socialDistance , 2) * Mathf.Pow(toAIVector.magnitude - personality.socialDistance, 2);
         rotProportion = Mathf.Clamp01(rotProportion); // 安全のため0〜1に制限
 
+        if (toAIVector.magnitude < personality.emergencyDistance)//緊急なら、予測をすべてにする
+            rotProportion = 1;
+        */
         // 内積から角度を求める）
+        /*
         float dot = Vector3.Dot(toAIVector.normalized, headForVector.normalized);
         dot = Mathf.Clamp(dot, -1f, 1f); // 浮動小数の誤差対策
-        float angle = Mathf.Acos(dot) * Mathf.Rad2Deg;
+        float angle = Mathf.Acos(dot) * Mathf.Rad2Deg;//現状180度しか拾えてないので、符号が消えている　　　-が+に変換されている？
+        */
+        /*
+        float signedAngle = Vector3.SignedAngle(headForVector, toAIVector, Vector3.up);//angleからsigndeAngleに変更
 
+
+        
         // Quaternionを使って、toAIVecotrを線対称にshootVectorの対称方向への方向単位ベクトル(rotVector)の作成
-        Quaternion rot = Quaternion.AngleAxis(angle, Vector3.up);
+        Quaternion rot = Quaternion.AngleAxis(signedAngle, Vector3.up);
         Vector3 rotVector = rot * toAIVector.normalized;
         rotVector = rotVector * headForVector.magnitude;//作成したrotatedVector(方向単位ベクトル)を元々の大きさにする
-        
 
 
-        escapeVector = (toAIVector * (1 - rotProportion)) + (rotVector * (rotProportion));//全体の割合を１
+        Debug.DrawRay(transform.position,rotVector  * 20f, Color.green, 0.5f);
+        */
+        //Debug.Log(rotProportion);
+        //Debug.Log(toAIVector.magnitude);//現状　距離12で0.1
+
+        //toAIVector = toAIVector.normalized;
+        //escapeVector = (toAIVector * (1 - rotProportion)) + (rotVector * (rotProportion));//全体の割合を１
+
+
+        //近くにいる状態から、Playerが逃げると追いかけるベクトルになるのを修正したい
 
         //2.フィールド端
-        /*
-        if () {//フィールド端
-
-
-        }
-        */
         //3.フィールドの四隅
+        //はしになったら、一旦苦るのをやめる＆emergency以下になったら中央に戻る
+        //現在どの位置にいるのか
 
-        if(toAIVector.magnitude > 20)
-            return Vector3.zero;
-        else
-            return escapeVector;
+        //Debug.DrawRay(transform.position,rotVector  * 5f, Color.red, 0.5f);
+
+        //if (toAIVector.magnitude < personality.socialDistance)
+            //Debug.Log("射程内に入りました");
+
+        switch (position) 
+        {
+            case Position.Escape:
+                float rotProportion = Mathf.Pow(1f / personality.socialDistance, 2) * Mathf.Pow(toAIVector.magnitude - personality.socialDistance, 2);
+                rotProportion = Mathf.Clamp01(rotProportion); // 安全のため0〜1に制限
+                //if (toAIVector.magnitude < personality.emergencyDistance)//緊急なら、予測をすべてにする
+                    //rotProportion = 1;
+                float signedAngle = Vector3.SignedAngle(headForVector, toAIVector, Vector3.up);//angleからsigndeAngleに変更
+                // Quaternionを使って、toAIVecotrを線対称にshootVectorの対称方向への方向単位ベクトル(rotVector)の作成
+                Quaternion rot = Quaternion.AngleAxis(signedAngle, Vector3.up);
+                Vector3 rotVector = rot * toAIVector.normalized;
+                rotVector = rotVector * headForVector.magnitude;//作成したrotatedVector(方向単位ベクトル)を元々の大きさにする
+
+
+                Debug.DrawRay(transform.position, rotVector * 20f, Color.green, 0.5f);
+                toAIVector = toAIVector.normalized;
+                escapeVector = (toAIVector * (1 - rotProportion)) + (rotVector * (rotProportion));//全体の割合を１
+                break;
+
+            case Position.Stop:
+                escapeVector = Vector3.zero;
+                break;
+
+            case Position.GoBack:
+                toCenterVector = (Vector3.zero - transform.position).normalized;
+                escapeVector = toCenterVector;
+               
+                //中央に戻る遷移において、中央に戻ったら変更可能にする
+                if (isGroundedCheck.IsGoBack() == false)
+                    isGoBacked = false;
+                else
+                    isGoBacked = true;
+                
+                Debug.Log($"isGoBacked:{isGoBacked}");
+                break;
+        
+        
+        
+        }
+
+        //Debug.DrawRay(transform.position, escapeVector * 20f, Color.blue, 0.5f);
+
+        //急接近の謎を解明したい
+
+        return escapeVector;
     }
 
     public override Vector3 PID()
@@ -418,13 +528,15 @@ public class AIController : BaseAI
                 */
                 GameObject bullet_AI = Instantiate(SpherePrefab_AI, origin, Quaternion.identity);//Quaternionは無回転を表す
                 
-                // 弾に力を加える
+                // 弾に力を加える   子オブジェクトとかにコライダーを付けると反発して、velocity.yが跳ね上がるので注意
                 Rigidbody bulletRb = bullet_AI.GetComponent<Rigidbody>();
                 bulletRb.velocity = shootDir_AI * bulletSpeed_AI_ver2;
-                Debug.Log($"velocity:{bulletRb.velocity}\n");
+
+                //Debug.Log($"velocity:{bulletRb.velocity}\n");
                 //Debug.Log($"ShootPos: {shootPos}\n");
-                Debug.Log($"bullet_AI:{bullet_AI}\n");
-                //Debug.Log($"bullet_AI_pos:{bullet_AI.transform.position}\n");
+                //Debug.Log($"bullet_AI:{bullet_AI}\n");
+                //Debug.Log($"bullet_AI_pos:{bullet_AI.transform.rotation}\n");
+                //Debug.Log($" shootDir:{shootDir_AI}");
                 //bullet_AIも通ってる
 
                 //ray.direction に向かってbulletSpeedで飛ばす
@@ -576,7 +688,7 @@ public class AIController : BaseAI
         //③予測ベクトルの作成
         predVector 　= (combinedPropVector * proportal) + (combinedDerVector * derivative * derFactor) + (integVector * integral);
 
-
+        /*
         // 可視化の原点（例えばAIの現在位置）
         Vector3 origin = transform.position;
 
@@ -601,7 +713,7 @@ public class AIController : BaseAI
             $"errorDerVector: {errorDerVector.ToString("F2")}\n"+
             $"derWeight:{derWeight.ToString("F2")}\n" 
         );
-
+        */
 
         return predDerVector;//一旦、比例を無視した、微分のみの戻り値
     }
@@ -710,7 +822,7 @@ public class AIController : BaseAI
         //PID作成
         predVector = (predPropVector * proportal) + (predDerVector * derivative * derFactor) + (integVector * integral);
         */
-
+        /*
         //デバッグ
         // 可視化の原点（例えばAIの現在位置）
         Vector3 origin = transform.position;

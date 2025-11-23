@@ -9,6 +9,7 @@ public abstract class BaseAI : MonoBehaviour
     public struct Personality
     {
         public float socialDistance;   // 距離の保ち方（例：0.5f〜10f）
+        public float emergencyDistance;//emergencyDistance以下になれば、rotPropotionの割合を1にする
         public float shootCoolTime;    // 弾を撃つ頻度（例：秒単位のクールタイム）
         public float intelligence;     // 予測力（0〜1）高いほど先読み行動
         public float cognition;        // 状況把握力（0〜1）高いほど素早く反応
@@ -17,12 +18,20 @@ public abstract class BaseAI : MonoBehaviour
         public bool  randomCoolTime;   //弾を撃つ頻度のランダム性 →trueならクールタイムをランダムにする
     }
 
-    public enum State
+    public enum Action
     {
         Attack,        // 攻撃
         Escape,        // 逃走
         Indifference   // 無関心
     }
+
+    public enum Position
+    {
+        Stop,
+        Escape,
+        GoBack
+    }
+
 
     public float speed = 5f;//移動速度
     //PID比率情報
@@ -59,9 +68,13 @@ public abstract class BaseAI : MonoBehaviour
     public float propLearningRateMin = 0.01f;//比例ベクトルをどの程度学習させるか→小さいほうが無難
     public float propLearningRateMax = 0.2f;
     public int dataCount = 10;//過去データを蓄積する数
+    //移動情報
+    public float moveTimer = 0.5f;
+    public float moveTimerCheck = 0.5f;
     //その他
     public GameObject player;
     public GameObject SpherePrefab_AI;  // 弾のプレハブ
+    public IsGroundedCheck isGroundedCheck;
 
 
     // --- AI内部で扱うベクトル類 ---privateだと子クラスで使えない
@@ -85,14 +98,20 @@ public abstract class BaseAI : MonoBehaviour
     protected Vector3 predPropVector;
     protected Vector3 errorPropVector;
 
+    
     protected Vector3 toAIVector;
     protected Vector3 rotVector;
     protected Vector3 escapeVector;
     protected Vector3 headForVector;
+    protected Vector3 toCenterVector;
 
     protected Vector3 shootPos;
     protected Vector3 shootPosSet;        // PID関数内で呼ぶ
     protected Vector3 toPlayerVector;     // AIからPlayerまでのベクトル
+
+    protected bool isGrounded;
+    protected bool isOutOfArea;
+    protected bool isGoBacked;
 
     protected List<Vector3> proportalData;
     protected List<Vector3> derivativeData;
@@ -102,8 +121,8 @@ public abstract class BaseAI : MonoBehaviour
 
     //構造体の実体化
     public Personality personality;
-    public State       action;
-
+    public Action       action;
+    public Position position;
 
     /*ShootTimer/BulletSpeed_AI/PD_long:PD_middle:PD_shortの上手くいった比率と数値
      * 0.5/65/1.7:0.6/0.9:0.6/0.5:0.8 →初期装備 D_long 1ぐらいあってもいいかも
@@ -111,9 +130,11 @@ public abstract class BaseAI : MonoBehaviour
      * 
      */
 
-    public abstract void    Behaivor();
+    //public abstract void    Behaivor();
     public abstract void    Shoot_AI(Vector3 shootPos);
+    public abstract void    UnderstandSituation();
     public abstract Vector3 PID();
+   
     public abstract Vector3 KeepSocialDistance(Vector3 headForVector);
     public abstract Vector3 ProportalDataAverage(Vector3 newData);
     public abstract Vector3 DerivativeDataAverage(Vector3 newData);
