@@ -5,98 +5,17 @@ using UnityEngine;
 public class AIController : BaseAI
 {
 
-    //PID比率情報
-    /*親クラスで定義しているため、コメントアウトして再定義しないようにする
-    public float proportal = 1.0f;
-    public float integral = 0.0f;
-    public float derivative = 0.4f;
-    public float proportal_short = 0.4f;
-    public float integral_short = 0.0f;
-    public float derivative_short = 0.9f;
-    public float proportal_middle = 0.9f;
-    public float integral_middle = 0.0f;
-    public float derivative_middle = 0.6f;
-    public float proportal_long = 1.7f;//1.6
-    public float integral_long = 0.0f;
-    public float derivative_long = 0.3f;//0.5
-    //弾丸情報
-    public float shootTimer = 0.5f;
-    public float shootTimerCheck = 0.5f;
-    public float shootPosTimer = 0.45f;
-    public float shootPosTimerCheck = 0.5f;//ベクトル更新の間隔
-    public float distance_short_middle = 25.0f;//短距離と中距離の基準
-    public float distance_middle_long = 50.0f;//中距離と遠距離の基準
-    public float distanceCheck = 70.0f;//可弾の基準
-    public float bulletSpeed_AI = 20f;  // 弾の速度  →65
-    public float bulletSpeed_AI_ver2 = 0.0f;
-    //強化学習情報
-    public float derWeightMin    = 0.3f;//合成微分ベクトルを作るうえで、過去微分ベクトルと直近微分ベクトルの割合の下限(derWeight)
-    public float derWeightMax    = 0.8f;
-    public float propWeightMin   = 0.3f;
-    public float propWeightMax   = 0.8f;
-    public float learningRate    = 0.1f;
-    public float derLearningRateMin = 0.01f;
-    public float derLearningRateMax = 0.2f;
-    public float propLearningRateMin = 0.01f;//比例ベクトルをどの程度学習させるか→小さいほうが無難
-    public float propLearningRateMax = 0.2f;
-    public int dataCount = 10;//過去データを蓄積する数
-    //その他
-    public GameObject player;
-    public GameObject SpherePrefab_AI;  // 弾のプレハブ
-
-
-    private Vector3 playerPos;
-    private Vector3 prePlayerPos;
-    private Vector3 preVarVector;
-    private Vector3 varVector;//前回から今回の座標の変化量ベクトル
-    private Vector3 propVector;//比例の座標
-    private Vector3 derVector;
-    private Vector3 integVector;
-    private Vector3 predVector;//予測ベクトル
-    private Vector3 errorVector;
-    private Vector3 avgPropVector;
-    private Vector3 avgDerVector;
-    private Vector3 avgVector;
-    private Vector3 shootVector;
-    private Vector3 combinedDerVector;//平均微分ベクトルと微分ベクトルの合成ベクトル
-    private Vector3 combinedPropVector;
-    private Vector3 predDerVector;
-    private Vector3 errorDerVector;
-    private Vector3 predPropVector;
-    private Vector3 errorPropVector;
-
-    private Vector3 shootPos;
-    private Vector3 shootPosSet;//PID関数内で呼ぶ
-    private Vector3 toPlayerVector;//AiからPlayerまでのベクトル
-    private List<Vector3> proportalData;
-    private List<Vector3> derivativeData;
-
+    /*
+    衝突判定本当に注意する!
+    AIとAIbulletの衝突をオフにするとか、タグを変えるとか
     */
 
-    /*ShootTimer/BulletSpeed_AI/PD_long:PD_middle:PD_shortの上手くいった比率と数値
-     * 0.5/65/1.7:0.6/0.9:0.6/0.5:0.8 →初期装備 D_long 1ぐらいあってもいいかも
-     * 0.3/85/2.1:0.6/1.3:0.6/未定
-     * 
-     
 
-    public struct Personality
-    {
-        public float socialDistance;   // 距離の保ち方（例：0.5f〜10f）
-        public float shootCoolTime;    // 弾を撃つ頻度（例：秒単位のクールタイム）
-        public float intelligence;     // 予測力（0〜1）高いほど先読み行動
-        public float cognition;        // 状況把握力（0〜1）高いほど素早く反応
-    }
 
-    public enum State
-    {
-        Attack,        // 攻撃
-        Escape,        // 逃走
-        Indifference   // 無関心
-    }
-    */
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        col = GetComponent<Collider>();
         isGroundedCheck = GetComponentInChildren<IsGroundedCheck>();//コンポーネントが子オブジェクトの場合の取得方法
         rb.freezeRotation = true; // 回転防止（地面で倒れないように）
     }
@@ -139,11 +58,60 @@ public class AIController : BaseAI
         isOutOfArea = true;
         isGoBacked = false;// true;
 
-        //構造体の初期化
+        //クラスの初期化 ここはデータが揃ってから行う  →変更したい場合は、ここをコメントアウト&inspectorから変更
+        fierce = new Personality
+        {
+            speed = 5,
+            socialDistance = 3f,
+            emergencyDistance = 1f,
+            shootCoolTime = 0.5f,
+            intelligence = 0.7f,
+            cognition = 0.6f,
+            randomCoolTime = false,
+            moveTimerCheck = 0.5f,
+            distanceCheck = 70.0f,//可弾の基準
+            bulletSpeed_AI = 60f, // 弾の速度  →65
+            bulletSpeed_AI_near = 30.0f,
+        };//実体をここで初期化しておいて、切り替わったらpersonalityに代入
+        timid = new Personality
+        {
+            speed = 5f,
+            socialDistance = 8f,
+            emergencyDistance = 5f,
+            shootCoolTime = 1.5f,
+            intelligence = 0.4f,
+            cognition = 0.8f,
+            randomCoolTime = true,
+            moveTimerCheck = 0.5f,
+            distanceCheck = 70.0f,//可弾の基準
+            bulletSpeed_AI = 60f, // 弾の速度  →65
+            bulletSpeed_AI_near = 30.0f,
+        };
+        cunning = new Personality
+        {
+            speed = 5f,
+            socialDistance = 5f,
+            emergencyDistance = 2f,
+            shootCoolTime = 1f,
+            intelligence = 0.9f,
+            cognition = 0.9f,
+            randomCoolTime = true,
+            moveTimerCheck = 0.5f,
+            distanceCheck = 70.0f,//可弾の基準
+            bulletSpeed_AI = 60f, // 弾の速度  →65
+            bulletSpeed_AI_near = 30.0f
+        };
+
+        //inspecterの初期の値(identity)をcurrentIdentityに代入   currentはprotectedでinspecterからは見えない
+        usingIdentity = Identity.Null;
+        SetIdentity(currentIdentity);
+
+        /*
         personality = new Personality
         {
             //陰湿
-            socialDistance   = 15f, // 距離の保ち方（例：0.5f〜10f）
+            speed = 5f,
+            socialDistance   = 30f, // 距離の保ち方（例：0.5f〜10f）
             emergencyDistance= 10f,//   相手の動きの向きが逃げる向きを決定づける距離
             shootCoolTime    = 0.5f,    // 弾を撃つ頻度（例：秒単位のクールタイム）
             intelligence     = 1f,    // 予測力（0〜1）高いほど先読み行動  
@@ -151,29 +119,60 @@ public class AIController : BaseAI
             shootCoolTimeMin = 0.3f,
             shootCoolTimeMax = 0.9f,
             randomCoolTime   = true,
+            moveTimerCheck = 0.5f,
+            distanceCheck = 70.0f,//可弾の基準
+            bulletSpeed_AI = 60f, // 弾の速度  →65
+            bulletSpeed_AI_near = 30.0f,
 
         };
+        */
+        /*
+        pidInfo = new PIDInfo
+        {
+            proportal = 1.0f,
+            integral  = 0.0f,
+            derivative= 0.4f,
+            proportal_short = 0.4f,
+            integral_short = 0.0f,
+            derivative_short = 0.9f,
+            proportal_middle = 0.9f,
+            integral_middle = 0.0f,
+            derivative_middle = 0.6f,
+            proportal_long = 1.7f,//1.6
+            integral_long = 0.0f,
+            derivative_long = 0.3f
+        };
+
+        learningAI = new LearningAI
+        {
+            derWeightMin = 0.3f,//合成微分ベクトルを作るうえで、過去微分ベクトルと直近微分ベクトルの割合の下限(derWeight)
+            derWeightMax = 0.8f,
+            propWeightMin = 0.3f,
+            propWeightMax = 0.8f,
+            learningRate = 0.1f,
+            derLearningRateMin = 0.01f,
+            derLearningRateMax = 0.2f,
+            propLearningRateMin = 0.01f,//比例ベクトルをどの程度学習させるか→小さいほうが無難
+            propLearningRateMax = 0.2f,
+            dataCount = 10,
+
+        };
+        */
         //ステートの初期化 アクセスするときは型.変数にする
         position = Position.Stop;
 
         
-
-
     }
 
     // Update is called once per frame
     void FixedUpdate()
     {
-        /*
+        //性格の更新確認
+        if(currentIdentity != usingIdentity)//identity型は大文字の文字列,personality型は小文字の変数名
+            SetIdentity(currentIdentity);
+
         //ベクトル更新　→　弾を撃つ
         //ベクトル更新のクールタイム
-        shootPosTimer += Time.deltaTime;
-        if(shootPosTimer >= shootPosTimerCheck)
-        {
-            shootPosTimer = 0f;
-            shootPos = PID();
-        } →これはやめといたほうがいい
-        */
 
         //shootTimerCheckとmoveTimerCheckは同じのほうが無難
         //弾を打つクールタイム
@@ -182,25 +181,17 @@ public class AIController : BaseAI
         {//shootTimerCheckを下げると、うまく追従できなくなる。厳密には、追いつかない →　なぜ　→　短すぎて、うまく予測できなくなっている？　→　弾を撃つ速度だけ、下げる
             shootTimer = 0f;
             shootPos = PID();
-            transform.LookAt(shootPos);
-            Shoot_AI(shootPos);
-            
+            Shoot_AI(shootPos);      
         }
 
         
         //移動ベクトル計算クールタイム
         moveTimer += Time.deltaTime;
-        if(moveTimer >= moveTimerCheck)
+        if(moveTimer >= personality.moveTimerCheck)
         {
             moveTimer = 0f;
-            //AIの移動ベクトルの基となるPlayerの予測ベクトルはここで更新する
-            headForVector = shootVector;
-            //追加
-            escapeVector = KeepSocialDistance(headForVector);
-            rb.velocity = escapeVector * speed;
-            Debug.DrawRay(transform.position, escapeVector * 20f, Color.blue, 0.5f);
-            Debug.Log($"Velocity:{rb.velocity}");
-
+            KeepSocialDistance();//headForVector);
+            //headForVector = shootVector;
         }
 
         //中央に戻るべきかのチェック
@@ -243,9 +234,13 @@ public class AIController : BaseAI
 
     }
 
-    public override Vector3 KeepSocialDistance(Vector3 headForVector) 
+    public override void KeepSocialDistance()//Vector3 headForVector) 
     {//shootVectorは次の相手の予測位置　ここは一旦保留 PID内でこの関数を呼ぶのも手 shootVector OR varVectorで迷っている
    
+        
+        //AIの移動ベクトルの基となるPlayerの予測ベクトルはここで更新する
+        headForVector = shootVector;
+
         //1.フィールド上　→追跡or逃走の2パターン
 
         //playerとの距離とベクトルの角度は比例する   →toAIVectorが基本・shootVectorが予測
@@ -260,9 +255,8 @@ public class AIController : BaseAI
         else //if (toAIVector.magnitude < personality.socialDistance && )
             position = Position.Escape;
 
-        //position = Position.Escape;
-
-        Debug.Log($"position:{position}");
+        
+        //Debug.Log($"position:{position}");
 
         /*
         //ベクトル同士の相違度を調べる   相違度から方向ベクトルを算出することはできない
@@ -322,20 +316,31 @@ public class AIController : BaseAI
         switch (position) 
         {
             case Position.Escape:
-                float rotProportion = Mathf.Pow(1f / personality.socialDistance, 2) * Mathf.Pow(toAIVector.magnitude - personality.socialDistance, 2);
-                rotProportion = Mathf.Clamp01(rotProportion); // 安全のため0〜1に制限
-                //if (toAIVector.magnitude < personality.emergencyDistance)//緊急なら、予測をすべてにする
-                    //rotProportion = 1;
-                float signedAngle = Vector3.SignedAngle(headForVector, toAIVector, Vector3.up);//angleからsigndeAngleに変更
-                // Quaternionを使って、toAIVecotrを線対称にshootVectorの対称方向への方向単位ベクトル(rotVector)の作成
-                Quaternion rot = Quaternion.AngleAxis(signedAngle, Vector3.up);
-                Vector3 rotVector = rot * toAIVector.normalized;
-                rotVector = rotVector * headForVector.magnitude;//作成したrotatedVector(方向単位ベクトル)を元々の大きさにする
+                if(toAIVector.magnitude < personality.socialDistance - 0.5f)//保険のための0.5
+                {
+                    float rotProportion = Mathf.Pow(1f / personality.socialDistance, 2) * Mathf.Pow(toAIVector.magnitude - personality.socialDistance, 2);//10・20=0.25  5・15=0.56 
+                    rotProportion = Mathf.Clamp01(rotProportion); // 安全のため0〜1に制限
+                    //if (toAIVector.magnitude < personality.emergencyDistance)//緊急なら、予測をすべてにする
+                        //rotProportion = 1;
+                    float signedAngle = Vector3.SignedAngle(headForVector, toAIVector, Vector3.up);//angleからsigndeAngleに変更
+                    // Quaternionを使って、toAIVecotrを線対称にshootVectorの対称方向への方向単位ベクトル(rotVector)の作成
+                    Quaternion rot = Quaternion.AngleAxis(signedAngle, Vector3.up);
+                    Vector3 rotVector = rot * toAIVector.normalized;
+                    rotVector = rotVector * headForVector.magnitude;//作成したrotatedVector(方向単位ベクトル)を元々の大きさにする
 
+                    Debug.DrawRay(transform.position, rotVector * 20f, Color.green, 0.5f);
+                    toAIVector = toAIVector.normalized;
+                    escapeVector = (toAIVector * (1 - rotProportion)) + (rotVector * (rotProportion));//全体の割合を１
+                    
+                    
 
-                Debug.DrawRay(transform.position, rotVector * 20f, Color.green, 0.5f);
-                toAIVector = toAIVector.normalized;
-                escapeVector = (toAIVector * (1 - rotProportion)) + (rotVector * (rotProportion));//全体の割合を１
+                }
+                else
+                {
+                    escapeVector = Vector3.zero;
+                    //Debug.Log("SocialDistanceを超えています");
+                }
+
                 break;
 
             case Position.Stop:
@@ -352,18 +357,21 @@ public class AIController : BaseAI
                 else
                     isGoBacked = true;
                 
-                Debug.Log($"isGoBacked:{isGoBacked}");
                 break;
         
         
         
         }
-
-        //Debug.DrawRay(transform.position, escapeVector * 20f, Color.blue, 0.5f);
-
+       
+        Debug.DrawRay(transform.position, escapeVector * 20f, Color.blue, 0.5f);
+        //Debug.Log($"isGoBacked:{isGoBacked}");
+        //Debug.Log($"isGrounded:{isGrounded}");
         //急接近の謎を解明したい
+        //SocialDistanceとAimagnitudeが同じになった時に動作がおかしい　
 
-        return escapeVector;
+        
+        rb.velocity = escapeVector * personality.speed;//ここで、最終移動更新
+        //return escapeVector;
     }
 
     public override Vector3 PID()
@@ -404,7 +412,7 @@ public class AIController : BaseAI
          **/
         toPlayerVector = playerPos - transform.position;
 
-        if (toPlayerVector.magnitude > distanceCheck)//可弾かどうか
+        if (toPlayerVector.magnitude > personality.distanceCheck)//可弾かどうか
         {
             //Debug.Log("撃つのやーめた\n");
             shootPosSet = Vector3.zero;
@@ -435,12 +443,12 @@ public class AIController : BaseAI
 
         if (toPlayerVector.magnitude > distance_middle_long)//遠距離
         {
-            age = (proportal_long - proportal_middle) / (distanceCheck - distance_middle_long);
-            century = proportal_long - age * distanceCheck;
+            age = (proportal_long - proportal_middle) / (personality.distanceCheck - distance_middle_long);
+            century = proportal_long - age * personality.distanceCheck;
             proportal = age * toPlayerVector.magnitude + century;
             //微分
             derivative = derivative_long;
-            bulletSpeed_AI_ver2 = bulletSpeed_AI;
+            bulletSpeed_AI_ver2 = personality.bulletSpeed_AI;
         }
         else if (toPlayerVector.magnitude > distance_short_middle)//中距離
         {
@@ -449,7 +457,7 @@ public class AIController : BaseAI
             proportal = age * toPlayerVector.magnitude + century;
 
             derivative = derivative_middle;
-            bulletSpeed_AI_ver2 = bulletSpeed_AI;
+            bulletSpeed_AI_ver2 = personality.bulletSpeed_AI;
         }
         else
         {
@@ -459,7 +467,7 @@ public class AIController : BaseAI
             proportal = age * toPlayerVector.magnitude + century;
             //proportal = proportal_short;
             derivative = derivative_short;
-            bulletSpeed_AI_ver2 = bulletSpeed_AI - 30;
+            bulletSpeed_AI_ver2 = personality.bulletSpeed_AI_near;
         }
 
 
@@ -517,6 +525,8 @@ public class AIController : BaseAI
         {
             if (SpherePrefab_AI != null)
             {
+                transform.LookAt(shootPos);//playerの方を向く
+
                 //ベクトルの作成+normalized
                 Vector3 origin = transform.position;
                 Vector3 shootDir_AI = (shootPos - origin).normalized;
@@ -530,7 +540,14 @@ public class AIController : BaseAI
                 
                 // 弾に力を加える   子オブジェクトとかにコライダーを付けると反発して、velocity.yが跳ね上がるので注意
                 Rigidbody bulletRb = bullet_AI.GetComponent<Rigidbody>();
+                Collider bulletCol = bullet_AI.GetComponent<Collider>();
                 bulletRb.velocity = shootDir_AI * bulletSpeed_AI_ver2;
+                
+                //AIとAIbulletの衝突を無視する
+                if (col != null && bulletCol != null)// true を渡すことで、この二つのコライダー間の衝突を無視する
+                    Physics.IgnoreCollision(col, bulletCol, true); 
+            
+
 
                 //Debug.Log($"velocity:{bulletRb.velocity}\n");
                 //Debug.Log($"ShootPos: {shootPos}\n");
@@ -855,6 +872,30 @@ public class AIController : BaseAI
         return predDerVector;//一旦、比例を無視した、微分のみの戻り値
     }
 
+    public override void SetIdentity(Identity currentIdentity)//Identityが種類　Personalityが能力
+    {
+        if (usingIdentity == currentIdentity) return;
+
+        usingIdentity = currentIdentity;//usingは現在適応しているidentity,currentは現在inspecter上のidentity
+        
+        switch(usingIdentity)
+        {
+            case Identity.Fierce:
+                personality = fierce;
+                break;
+            case Identity.Timid:
+                personality = timid;
+                break;
+            case Identity.Cunning:
+                personality = cunning;
+                break;
+            default:
+                Debug.Log($"usingIdentity:{usingIdentity}");
+                break;
+        }
+    
+        Debug.Log($"usingIdentity:{usingIdentity}");
+    }
 
 
 }

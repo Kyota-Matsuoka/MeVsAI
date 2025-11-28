@@ -13,7 +13,7 @@ public class IsGroundedCheck : MonoBehaviour
 
     void Awake()
     {
-       isGrounded = true;
+        isGrounded = false;
         isOutOfArea = false;
         isGoBack = true;
 
@@ -30,7 +30,7 @@ public class IsGroundedCheck : MonoBehaviour
     }
     public bool IsGoBack()
     {
-       // Debug.Log($"isGoBack:{isGoBack}");
+       Debug.Log($"isGoBack:{isGoBack}");
 
         return isGoBack;
     }
@@ -66,6 +66,8 @@ public class IsGroundedCheck : MonoBehaviour
             //Debug.Log("中央にいます");
             isGoBack = false;
         }
+        else if (other.gameObject.CompareTag("Ground"))
+            isGrounded = true;
 
             
         

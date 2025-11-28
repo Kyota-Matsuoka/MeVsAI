@@ -4,10 +4,11 @@ using UnityEngine;
 
 public abstract class BaseAI : MonoBehaviour
 {
-
-    [System.Serializable]//構造体をエディター内で表示するために必要
-    public struct Personality
+    //Personality Identity で撃つ頻度、逃げる速度、状況把握力(行動優先度)も追加したほうがいいかな。
+    [System.Serializable]//構造体をエディター内で表示するために必要  構造体のpublicは直接代入できない
+    public class Personality//構造体は値型(コピー)なので、注意   struct→classに変更　値型→参照型
     {
+        public float speed;//移動速度
         public float socialDistance;   // 距離の保ち方（例：0.5f〜10f）
         public float emergencyDistance;//emergencyDistance以下になれば、rotPropotionの割合を1にする
         public float shootCoolTime;    // 弾を撃つ頻度（例：秒単位のクールタイム）
@@ -16,6 +17,51 @@ public abstract class BaseAI : MonoBehaviour
         public float shootCoolTimeMin;
         public float shootCoolTimeMax; //ランダム性がオンのときのクールタイム最大値
         public bool  randomCoolTime;   //弾を撃つ頻度のランダム性 →trueならクールタイムをランダムにする
+        
+        public float moveTimerCheck;
+        public float distanceCheck;//可弾の基準
+        public float bulletSpeed_AI;  // 弾の速度  →65
+        public float bulletSpeed_AI_near;//近距離の弾の速度
+
+    }
+    /*
+    [System.Serializable]
+    public struct PIDInfo
+    {
+        //PID比率情報
+        public float proportal;
+        public float integral;
+        public float derivative;
+        public float proportal_short;
+        public float integral_short;
+        public float derivative_short;
+        public float proportal_middle;
+        public float integral_middle;
+        public float derivative_middle;
+        public float proportal_long;//1.6
+        public float integral_long;
+        public float derivative_long;
+    }
+    [System.Serializable]
+    public struct LearningAI
+    {
+        public float derWeightMin;//合成微分ベクトルを作るうえで、過去微分ベクトルと直近微分ベクトルの割合の下限(derWeight)
+        public float derWeightMax;
+        public float propWeightMin;
+        public float propWeightMax;
+        public float learningRate;
+        public float derLearningRateMin;
+        public float derLearningRateMax;
+        public float propLearningRateMin;//比例ベクトルをどの程度学習させるか→小さいほうが無難
+        public float propLearningRateMax;
+        public int dataCount;//過去データを蓄積する数
+    }
+    */
+    public enum Identity{
+        Null,
+        Fierce,//獰猛
+        Timid,//臆病
+        Cunning//ずる賢い
     }
 
     public enum Action
@@ -31,9 +77,11 @@ public abstract class BaseAI : MonoBehaviour
         Escape,
         GoBack
     }
+    
 
 
-    public float speed = 5f;//移動速度
+    //public float speed = 5f;//移動速度
+    
     //PID比率情報
     public float proportal = 1.0f;
     public float integral = 0.0f;
@@ -47,17 +95,25 @@ public abstract class BaseAI : MonoBehaviour
     public float proportal_long = 1.7f;//1.6
     public float integral_long = 0.0f;
     public float derivative_long = 0.3f;//0.5
+    
+    //移動情報
+    //public float moveTimer = 0.5f;
+    //public float moveTimerCheck = 0.5f;
     //弾丸情報
-    public float shootTimer = 0.5f;
+    //public float shootTimer = 0.5f;
     public float shootTimerCheck = 0.5f;
     public float shootPosTimer = 0.45f;
-    public float shootPosTimerCheck = 0.5f;//ベクトル更新の間隔
+    public float shootPosTimerCheck = 0.5f;//shootベクトル更新の間隔　プレイヤ位置情報更新の頻度
     public float distance_short_middle = 25.0f;//短距離と中距離の基準
     public float distance_middle_long = 50.0f;//中距離と遠距離の基準
+   
+    /*
     public float distanceCheck = 70.0f;//可弾の基準
-    public float bulletSpeed_AI = 20f;  // 弾の速度  →65
-    public float bulletSpeed_AI_ver2 = 0.0f;
+    public float bulletSpeed_AI = 60f;  // 弾の速度  →65
+    public float bulletSpeed_AI_near = 30.0f;//近距離の弾の速度
+    */
     //強化学習情報
+    
     public float derWeightMin = 0.3f;//合成微分ベクトルを作るうえで、過去微分ベクトルと直近微分ベクトルの割合の下限(derWeight)
     public float derWeightMax = 0.8f;
     public float propWeightMin = 0.3f;
@@ -68,13 +124,52 @@ public abstract class BaseAI : MonoBehaviour
     public float propLearningRateMin = 0.01f;//比例ベクトルをどの程度学習させるか→小さいほうが無難
     public float propLearningRateMax = 0.2f;
     public int dataCount = 10;//過去データを蓄積する数
-    //移動情報
-    public float moveTimer = 0.5f;
-    public float moveTimerCheck = 0.5f;
+    
     //その他
     public GameObject player;
     public GameObject SpherePrefab_AI;  // 弾のプレハブ
     public IsGroundedCheck isGroundedCheck;
+
+
+    //構造体の実体化
+    public Personality personality; //protectedで良い
+    public Personality fierce;
+    public Personality timid;
+    public Personality cunning;
+    public Identity    currentIdentity;
+    //public PIDInfo     pidInfo;
+    //public LearningAI  learningAI;
+    public Action      action;
+    public Position    position;
+   
+
+    /*ShootTimer/BulletSpeed_AI/PD_long:PD_middle:PD_shortの上手くいった比率と数値
+     * 0.5/65/1.7:0.6/0.9:0.6/0.5:0.8 →初期装備 D_long 1ぐらいあってもいいかも
+     * 0.3/85/2.1:0.6/1.3:0.6/未定
+     * 
+     */
+
+    //public abstract void    Behaivor();
+    public abstract void    Shoot_AI(Vector3 shootPos);
+    public abstract void    UnderstandSituation();
+    public abstract void    KeepSocialDistance();
+    public abstract void    SetIdentity(Identity currentIdentity);
+    public abstract Vector3 PID();
+   
+    public abstract Vector3 ProportalDataAverage(Vector3 newData);
+    public abstract Vector3 DerivativeDataAverage(Vector3 newData);
+    public abstract Vector3 ReinForceLearning_Ver2(Vector3 varVector, float derFactor);
+
+
+
+
+
+
+
+    //AI情報
+    protected float shootTimer = 0.5f;
+    protected float moveTimer  = 0.5f;
+    protected float bulletSpeed_AI_ver2 = 0.0f;//bulletSpeed_AI = bulletSpeed_AI_ver2される
 
 
     // --- AI内部で扱うベクトル類 ---privateだと子クラスで使えない
@@ -118,30 +213,14 @@ public abstract class BaseAI : MonoBehaviour
 
 
     protected Rigidbody rb;
+    protected Collider col;
 
-    //構造体の実体化
-    public Personality personality;
-    public Action       action;
-    public Position position;
-
-    /*ShootTimer/BulletSpeed_AI/PD_long:PD_middle:PD_shortの上手くいった比率と数値
-     * 0.5/65/1.7:0.6/0.9:0.6/0.5:0.8 →初期装備 D_long 1ぐらいあってもいいかも
-     * 0.3/85/2.1:0.6/1.3:0.6/未定
-     * 
-     */
-
-    //public abstract void    Behaivor();
-    public abstract void    Shoot_AI(Vector3 shootPos);
-    public abstract void    UnderstandSituation();
-    public abstract Vector3 PID();
-   
-    public abstract Vector3 KeepSocialDistance(Vector3 headForVector);
-    public abstract Vector3 ProportalDataAverage(Vector3 newData);
-    public abstract Vector3 DerivativeDataAverage(Vector3 newData);
-    public abstract Vector3 ReinForceLearning_Ver2(Vector3 varVector, float derFactor);
+    protected Identity usingIdentity;
 
 
 
+
+    
 
 
     // Start is called before the first frame update
